@@ -14,7 +14,7 @@ import (
 )
 
 func TestNewXormLoggerEnablesSQLAtDebugLevel(t *testing.T) {
-	logger := NewXormLogger(klog.NewStdLogger(io.Discard), "debug")
+	logger := NewXormLogger(klog.NewStdLogger(io.Discard), true)
 	if logger.Level() != xormlog.LOG_DEBUG {
 		t.Fatalf("expected debug level, got %v", logger.Level())
 	}
@@ -24,7 +24,7 @@ func TestNewXormLoggerEnablesSQLAtDebugLevel(t *testing.T) {
 }
 
 func TestNewXormLoggerDisablesSQLAtInfoLevel(t *testing.T) {
-	logger := NewXormLogger(klog.NewStdLogger(io.Discard), "info")
+	logger := NewXormLogger(klog.NewStdLogger(io.Discard), false)
 	if logger.Level() != xormlog.LOG_OFF {
 		t.Fatalf("expected off level, got %v", logger.Level())
 	}
@@ -34,7 +34,7 @@ func TestNewXormLoggerDisablesSQLAtInfoLevel(t *testing.T) {
 }
 
 func TestXormLoggerShowSQLCanBeOverridden(t *testing.T) {
-	logger := NewXormLogger(klog.NewStdLogger(io.Discard), "info")
+	logger := NewXormLogger(klog.NewStdLogger(io.Discard), false)
 	logger.ShowSQL(true)
 	if !logger.IsShowSQL() {
 		t.Fatal("expected ShowSQL(true) to enable sql logging")
@@ -43,7 +43,7 @@ func TestXormLoggerShowSQLCanBeOverridden(t *testing.T) {
 
 func TestXormLoggerAfterSQLCompactsWhitespace(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewXormLogger(klog.NewStdLogger(&buf), "debug")
+	logger := NewXormLogger(klog.NewStdLogger(&buf), true)
 
 	logger.AfterSQL(xormlog.LogContext(contexts.ContextHook{
 		Ctx: context.Background(),

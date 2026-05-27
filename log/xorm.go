@@ -24,8 +24,13 @@ var _ xlog.ContextLogger = (*xormLogger)(nil)
 
 // NewXormLogger 创建 xorm 专用日志器。
 // 这里不复用应用层默认 caller，而是交给 AfterSQL 自己回溯栈帧，确保 caller 落到 data 层。
-func NewXormLogger(base klog.Logger, xormLogLevel string) xlog.ContextLogger {
-	level, showSQL := resolveXormLogConfig(xormLogLevel)
+func NewXormLogger(base klog.Logger, showSQL bool) xlog.ContextLogger {
+	var level xlog.LogLevel
+	if showSQL {
+		level = xlog.LOG_DEBUG
+	} else {
+		level = xlog.LOG_OFF
+	}
 	logger := klog.With(
 		base,
 		"component", "xorm",
@@ -38,15 +43,6 @@ func NewXormLogger(base klog.Logger, xormLogLevel string) xlog.ContextLogger {
 		level:   level,
 		showSQL: showSQL,
 	}
-}
-
-// resolveXormLogConfig 解析独立的 xorm 日志级别配置
-func resolveXormLogConfig(xormLogLevel string) (xlog.LogLevel, bool) {
-	levelStr := strings.ToLower(strings.TrimSpace(xormLogLevel))
-	if levelStr == "debug" {
-		return xlog.LOG_DEBUG, true
-	}
-	return xlog.LOG_OFF, false
 }
 
 // Debug 族方法直接透传给项目日志器，并沿用 xorm 自己的日志级别判断。

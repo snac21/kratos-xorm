@@ -110,17 +110,19 @@ func QueryPageBuilder[T any](session *xorm.Session, stmt *builder.Builder, curre
 		}, nil
 	}
 
-	// 2. 执行分页查询。
+	// 2. 执行分页查询
 	limit := int(size)
 	offset := int((current - 1) * size)
 
+	// 使用 builder 原生的 Limit 方法，自动适配数据库方言。
+	stmt.Limit(limit, offset)
 	sqlText, args, err := stmt.ToSQL()
 	if err != nil {
 		return nil, err
 	}
 
 	records := make([]T, 0)
-	err = session.Limit(limit, offset).SQL(sqlText, args...).Find(&records)
+	err = session.SQL(sqlText, args...).Find(&records)
 	if err != nil {
 		return nil, err
 	}
@@ -132,4 +134,3 @@ func QueryPageBuilder[T any](session *xorm.Session, stmt *builder.Builder, curre
 		Records: records,
 	}, nil
 }
-

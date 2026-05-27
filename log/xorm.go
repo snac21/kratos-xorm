@@ -12,11 +12,10 @@ import (
 )
 
 // xormLogger 将项目内统一的 Kratos Logger 适配成 xorm 可识别的日志接口。
-// 这里额外维护了 xorm 的日志级别和 showSQL 开关，避免 xorm 使用默认 stdout logger。
+// 这里仅维护唯一的 showSQL 开关作为可信数据源，决定是否记录 SQL 以及是否记录其他日志级别。
 type xormLogger struct {
 	logger  klog.Logger
 	helper  *klog.Helper
-	level   xlog.LogLevel
 	showSQL bool
 }
 
@@ -25,12 +24,6 @@ var _ xlog.ContextLogger = (*xormLogger)(nil)
 // NewXormLogger 创建 xorm 专用日志器。
 // 这里不复用应用层默认 caller，而是交给 AfterSQL 自己回溯栈帧，确保 caller 落到 data 层。
 func NewXormLogger(base klog.Logger, showSQL bool) xlog.ContextLogger {
-	var level xlog.LogLevel
-	if showSQL {
-		level = xlog.LOG_DEBUG
-	} else {
-		level = xlog.LOG_OFF
-	}
 	logger := klog.With(
 		base,
 		"component", "xorm",
@@ -40,71 +33,73 @@ func NewXormLogger(base klog.Logger, showSQL bool) xlog.ContextLogger {
 	return &xormLogger{
 		logger:  logger,
 		helper:  klog.NewHelper(logger),
-		level:   level,
 		showSQL: showSQL,
 	}
 }
 
-// Debug 族方法直接透传给项目日志器，并沿用 xorm 自己的日志级别判断。
+// Debug 族方法直接透传给项目日志器，当且仅当 showSQL 为真时输出。
 func (l *xormLogger) Debug(v ...any) {
-	if l.level <= xlog.LOG_DEBUG {
+	if l.showSQL {
 		l.helper.Debug(v...)
 	}
 }
 
 func (l *xormLogger) Debugf(format string, v ...any) {
-	if l.level <= xlog.LOG_DEBUG {
+	if l.showSQL {
 		l.helper.Debugf(format, v...)
 	}
 }
 
 // Error 族方法用于输出 xorm 运行期错误，例如 SQL 执行异常。
 func (l *xormLogger) Error(v ...any) {
-	if l.level <= xlog.LOG_ERR {
+	if l.showSQL {
 		l.helper.Error(v...)
 	}
 }
 
 func (l *xormLogger) Errorf(format string, v ...any) {
-	if l.level <= xlog.LOG_ERR {
+	if l.showSQL {
 		l.helper.Errorf(format, v...)
 	}
 }
 
 // Info 族方法用于输出普通的 xorm 信息，包括 SQL 执行日志。
 func (l *xormLogger) Info(v ...any) {
-	if l.level <= xlog.LOG_INFO {
+	if l.showSQL {
 		l.helper.Info(v...)
 	}
 }
 
 func (l *xormLogger) Infof(format string, v ...any) {
-	if l.level <= xlog.LOG_INFO {
+	if l.showSQL {
 		l.helper.Infof(format, v...)
 	}
 }
 
 // Warn 族方法用于输出 xorm 警告日志。
 func (l *xormLogger) Warn(v ...any) {
-	if l.level <= xlog.LOG_WARNING {
+	if l.showSQL {
 		l.helper.Warn(v...)
 	}
 }
 
 func (l *xormLogger) Warnf(format string, v ...any) {
-	if l.level <= xlog.LOG_WARNING {
+	if l.showSQL {
 		l.helper.Warnf(format, v...)
 	}
 }
 
-// Level 返回当前 xorm logger 的日志级别。
+// Level 根据 showSQL 返回适配的日志级别。
 func (l *xormLogger) Level() xlog.LogLevel {
-	return l.level
+	if l.showSQL {
+		return xlog.LOG_DEBUG
+	}
+	return xlog.LOG_OFF
 }
 
-// SetLevel 允许 xorm 在运行期动态调整日志级别。
+// SetLevel 根据设置的日志级别动态更新 showSQL 状态。
 func (l *xormLogger) SetLevel(level xlog.LogLevel) {
-	l.level = level
+	l.showSQL = (level <= xlog.LOG_DEBUG)
 }
 
 // ShowSQL 控制是否打印 SQL。
@@ -190,7 +185,7 @@ func resolveSQLCaller() string {
 		frame, more := frames.Next()
 
 		// 1. 跳过框架内部实现帧（runtime, testing, kratos, xorm 以及当前公共库自身）
-		if shouldSkipSQLCallerFrame(frame.Function, frame.File) {
+		if shouldSkipSQLCallerFrame(frame.Function) {
 			if !more {
 				break
 			}
@@ -234,7 +229,7 @@ func resolveSQLCaller() string {
 // shouldSkipSQLCallerFrame 过滤掉不应该作为业务 caller 的内部栈帧。
 // 判断逻辑：
 //   - 函数名以框架前缀或当前库前缀开头 → 跳过
-func shouldSkipSQLCallerFrame(function string, file string) bool {
+func shouldSkipSQLCallerFrame(function string) bool {
 	// 需要跳过的函数名前缀列表
 	skipPrefixes := []string{
 		"runtime.",                       // Go 运行时
@@ -266,18 +261,8 @@ func isPreferredDataCallerFrame(file string) bool {
 	if !isDataCallerFrame(file) {
 		return false
 	}
-	// data 层中需要排除的基础设施文件
-	skipSuffixes := []string{
-		"/internal/data/data.go", // 数据层初始化和依赖注入
-	}
-	// 如果文件是上述基础设施文件之一，返回 false，降级为次优候选
-	for _, suffix := range skipSuffixes {
-		if strings.HasSuffix(file, suffix) {
-			return false
-		}
-	}
-	// 不在排除列表中的 data 层文件，即为具体仓储文件（如 auth.go、role.go）
-	return true
+	// 直接排除初始化基础设施文件，无需遍历数组
+	return !strings.HasSuffix(file, "/internal/data/data.go")
 }
 
 // shortCaller 把绝对路径压缩成类似 data/auth.go:108 的短格式，便于日志展示。

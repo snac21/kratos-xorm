@@ -161,7 +161,7 @@ func TestShouldSkipSQLCallerFrame(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldSkipSQLCallerFrame(tt.function, tt.file)
+			got := shouldSkipSQLCallerFrame(tt.function)
 			if got != tt.expected {
 				t.Errorf("shouldSkipSQLCallerFrame() = %v, expected %v", got, tt.expected)
 			}

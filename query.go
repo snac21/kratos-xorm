@@ -1,6 +1,7 @@
 package kratosxorm
 
 import (
+	"context"
 	"database/sql"
 
 	"xorm.io/builder"
@@ -11,8 +12,39 @@ type CountRow struct {
 	Total int64 `xorm:"'total'"`
 }
 
+// TenantScope 标识实体需要注入租户隔离
+type TenantScope interface {
+	TenantIdField() string // 返回租户 ID 的 SQL 字段名，例如 "tenant_id"
+}
+
+// TenantEvaluator 全局租户上下文解析器接口，由外部模块启动时注册
+type TenantEvaluator interface {
+	Evaluate(ctx context.Context) (tenantID int64, isPlatformAdmin bool, ok bool)
+}
+
+// ActiveTenantEvaluator 当前激活的租户评估器实例
+var ActiveTenantEvaluator TenantEvaluator
+
+// ApplyTenantScope 自动检测并为 xorm builder 注入租户条件限制
+func ApplyTenantScope(ctx context.Context, stmt *builder.Builder, fieldName string) *builder.Builder {
+	if ActiveTenantEvaluator == nil {
+		return stmt
+	}
+	tenantID, isPlatformAdmin, ok := ActiveTenantEvaluator.Evaluate(ctx)
+	if !ok || isPlatformAdmin {
+		return stmt
+	}
+	// 注入租户隔离条件
+	return stmt.And(builder.Eq{fieldName: tenantID})
+}
+
 // QueryOneByBuilder executes a builder-generated single-table query and scans one row.
-func QueryOneByBuilder[T any](session *xorm.Session, stmt *builder.Builder) (*T, bool, error) {
+func QueryOneByBuilder[T any](ctx context.Context, session *xorm.Session, stmt *builder.Builder) (*T, bool, error) {
+	var t T
+	if ts, ok := any(t).(TenantScope); ok {
+		stmt = ApplyTenantScope(ctx, stmt, ts.TenantIdField())
+	}
+
 	sqlText, args, err := stmt.ToSQL()
 	if err != nil {
 		return nil, false, err
@@ -30,7 +62,12 @@ func QueryOneByBuilder[T any](session *xorm.Session, stmt *builder.Builder) (*T,
 }
 
 // QueryListByBuilder executes a builder-generated single-table query and scans rows.
-func QueryListByBuilder[T any](session *xorm.Session, stmt *builder.Builder) ([]T, error) {
+func QueryListByBuilder[T any](ctx context.Context, session *xorm.Session, stmt *builder.Builder) ([]T, error) {
+	var t T
+	if ts, ok := any(t).(TenantScope); ok {
+		stmt = ApplyTenantScope(ctx, stmt, ts.TenantIdField())
+	}
+
 	sqlText, args, err := stmt.ToSQL()
 	if err != nil {
 		return nil, err
@@ -53,8 +90,8 @@ func QueryListBySQL[T any](session *xorm.Session, sqlText string, args ...interf
 }
 
 // CountByBuilder executes a builder-generated COUNT query and returns the scalar count.
-func CountByBuilder(session *xorm.Session, stmt *builder.Builder) (int64, error) {
-	row, has, err := QueryOneByBuilder[CountRow](session, stmt)
+func CountByBuilder(ctx context.Context, session *xorm.Session, stmt *builder.Builder) (int64, error) {
+	row, has, err := QueryOneByBuilder[CountRow](ctx, session, stmt)
 	if err != nil {
 		return 0, err
 	}
@@ -65,7 +102,7 @@ func CountByBuilder(session *xorm.Session, stmt *builder.Builder) (int64, error)
 }
 
 // ExecBuilder executes a builder-generated single-table write statement.
-func ExecBuilder(session *xorm.Session, stmt *builder.Builder) (sql.Result, error) {
+func ExecBuilder(ctx context.Context, session *xorm.Session, stmt *builder.Builder) (sql.Result, error) {
 	sqlText, args, err := stmt.ToSQL()
 	if err != nil {
 		return nil, err
@@ -85,7 +122,12 @@ type Page[T any] struct {
 }
 
 // QueryPageBuilder executes a generic paginated query.
-func QueryPageBuilder[T any](session *xorm.Session, stmt *builder.Builder, current int64, size int64) (*Page[T], error) {
+func QueryPageBuilder[T any](ctx context.Context, session *xorm.Session, stmt *builder.Builder, current int64, size int64) (*Page[T], error) {
+	var t T
+	if ts, ok := any(t).(TenantScope); ok {
+		stmt = ApplyTenantScope(ctx, stmt, ts.TenantIdField())
+	}
+
 	if current <= 0 {
 		current = 1
 	}
@@ -96,7 +138,7 @@ func QueryPageBuilder[T any](session *xorm.Session, stmt *builder.Builder, curre
 	// 1. 构造通用的子查询 COUNT 语句以获取总数。
 	// 这可以保证无论原始 stmt 包含何种 select 列、JOIN 或复杂的 WHERE，都能正确统计出总记录数。
 	countStmt := builder.MySQL().Select("COUNT(1) AS total").From(stmt, "temp_count")
-	total, err := CountByBuilder(session, countStmt)
+	total, err := CountByBuilder(ctx, session, countStmt)
 	if err != nil {
 		return nil, err
 	}

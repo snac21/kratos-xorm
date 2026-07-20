@@ -4,17 +4,17 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
-	klog "github.com/go-kratos/kratos/v2/log"
 	"xorm.io/xorm/contexts"
 	xormlog "xorm.io/xorm/log"
 )
 
 func TestNewXormLoggerEnablesSQLAtDebugLevel(t *testing.T) {
-	logger := NewXormLogger(klog.NewStdLogger(io.Discard), true)
+	logger := NewXormLogger(slog.New(slog.NewTextHandler(io.Discard, nil)), true)
 	if logger.Level() != xormlog.LOG_DEBUG {
 		t.Fatalf("expected debug level, got %v", logger.Level())
 	}
@@ -24,7 +24,7 @@ func TestNewXormLoggerEnablesSQLAtDebugLevel(t *testing.T) {
 }
 
 func TestNewXormLoggerDisablesSQLAtInfoLevel(t *testing.T) {
-	logger := NewXormLogger(klog.NewStdLogger(io.Discard), false)
+	logger := NewXormLogger(slog.New(slog.NewTextHandler(io.Discard, nil)), false)
 	if logger.Level() != xormlog.LOG_OFF {
 		t.Fatalf("expected off level, got %v", logger.Level())
 	}
@@ -34,7 +34,7 @@ func TestNewXormLoggerDisablesSQLAtInfoLevel(t *testing.T) {
 }
 
 func TestXormLoggerShowSQLCanBeOverridden(t *testing.T) {
-	logger := NewXormLogger(klog.NewStdLogger(io.Discard), false)
+	logger := NewXormLogger(slog.New(slog.NewTextHandler(io.Discard, nil)), false)
 	logger.ShowSQL(true)
 	if !logger.IsShowSQL() {
 		t.Fatal("expected ShowSQL(true) to enable sql logging")
@@ -43,7 +43,15 @@ func TestXormLoggerShowSQLCanBeOverridden(t *testing.T) {
 
 func TestXormLoggerAfterSQLCompactsWhitespace(t *testing.T) {
 	var buf bytes.Buffer
-	logger := NewXormLogger(klog.NewStdLogger(&buf), true)
+	logger := NewXormLogger(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// 移除时间等属性方便匹配
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})), true)
 
 	logger.AfterSQL(xormlog.LogContext(contexts.ContextHook{
 		Ctx: context.Background(),
@@ -71,50 +79,9 @@ ORDER BY rm.menu_id ASC
 	}
 }
 
-func TestShortCaller(t *testing.T) {
-	tests := []struct {
-		name     string
-		file     string
-		line     int
-		expected string
-	}{
-		{
-			name:     "无路径分隔符文件名",
-			file:     "auth.go",
-			line:     108,
-			expected: "auth.go:108",
-		},
-		{
-			name:     "单级目录路径",
-			file:     "/auth.go",
-			line:     108,
-			expected: "auth.go:108",
-		},
-		{
-			name:     "标准两级目录路径",
-			file:     "data/auth.go",
-			line:     108,
-			expected: "auth.go:108",
-		},
-		{
-			name:     "多级长路径截取",
-			file:     "/Users/Cage/snac21/github-go/xorm-learn/bss-v2/internal/data/auth.go",
-			line:     108,
-			expected: "data/auth.go:108",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := shortCaller(tt.file, tt.line)
-			if got != tt.expected {
-				t.Errorf("shortCaller() = %q, expected %q", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestShouldSkipSQLCallerFrame(t *testing.T) {
+	logger := NewXormLogger(slog.New(slog.NewTextHandler(io.Discard, nil)), true).(*xormLogger)
+
 	tests := []struct {
 		name     string
 		function string
@@ -135,8 +102,8 @@ func TestShouldSkipSQLCallerFrame(t *testing.T) {
 		},
 		{
 			name:     "Kratos 框架内部帧应跳过",
-			function: "github.com/go-kratos/kratos/v2/log.(*Helper).Log",
-			file:     "/pkg/mod/github.com/go-kratos/kratos/v2@v2.7.0/log/helper.go",
+			function: "github.com/go-kratos/kratos/v3/log.(*Helper).Log",
+			file:     "/pkg/mod/github.com/go-kratos/kratos/v3@v3.0.0/log/helper.go",
 			expected: true,
 		},
 		{
@@ -146,8 +113,8 @@ func TestShouldSkipSQLCallerFrame(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "当前适配层文件自身应跳过",
-			function: "github.com/snac21/kratos-xorm/log.resolveSQLCaller",
+			name:     "当前适配层文件自身应动态跳过",
+			function: logger.selfPackageName + ".resolveSQLCallerPC",
 			file:     "/Users/Cage/.../kratos-xorm/log/xorm.go",
 			expected: true,
 		},
@@ -161,7 +128,7 @@ func TestShouldSkipSQLCallerFrame(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldSkipSQLCallerFrame(tt.function)
+			got := logger.shouldSkipSQLCallerFrame(tt.function)
 			if got != tt.expected {
 				t.Errorf("shouldSkipSQLCallerFrame() = %v, expected %v", got, tt.expected)
 			}

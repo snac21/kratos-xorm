@@ -137,7 +137,7 @@ func QueryPageBuilder[T any](ctx context.Context, session *xorm.Session, stmt *b
 
 	// 1. 构造通用的子查询 COUNT 语句以获取总数。
 	// 这可以保证无论原始 stmt 包含何种 select 列、JOIN 或复杂的 WHERE，都能正确统计出总记录数。
-	countStmt := builder.MySQL().Select("COUNT(1) AS total").From(stmt, "temp_count")
+	countStmt := builder.Select("COUNT(1) AS total").From(stmt, "temp_count")
 	total, err := CountByBuilder(ctx, session, countStmt)
 	if err != nil {
 		return nil, err
